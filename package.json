@@ -1,0 +1,20 @@
+{
+  "scripts": {
+    "start": "npx hardhat node",
+    "deploy:riddle": "npx hardhat ignition deploy ./ignition/modules/RiddleQuest.ts --network sepolia --verify",
+    "copy:factory": "cp artifacts/contracts/RiddleQuestFactory.sol/RiddleQuestFactory.json ../frontend/src/config/abi/RiddleQuestFactory.json",
+    "copy:verifier": "cp artifacts/contracts/RiddleVerifier.sol/HonkVerifier.json ../frontend/src/config/abi/HonkVerifier.json",
+    "deploy": "npm run deploy:riddle && npm run copy:factory && npm run copy:verifier"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.2",
+    "@openzeppelin/contracts": "^5.1.0",
+    "dotenv": "^16.5.0",
+    "hardhat": "^2.23.0"
+  },
+  "dependencies": {
+    "@nomicfoundation/hardhat-toolbox-viem": "^3.0.0",
+    "hardhat-contract-sizer": "^2.10.0",
+    "viem": "^2.28.4"
+  }
+}
