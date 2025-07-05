@@ -1,8 +1,17 @@
 import { buildModule } from '@nomicfoundation/hardhat-ignition/modules';
 
-const Vault = buildModule('Vault', (m) => {
-  const verifier = m.contract('ActionVerifier');
-  const factory = m.contract('Vault', [verifier]);
+const VaultModule = buildModule('Vault', (m) => {
+  const deployer = m.getAccount(0);
+  const tokenAddress = process.env.TOKEN_ADDRES;
+  if (!tokenAddress) {
+    throw new Error("TOKEN_ADDRESS environment variable must be set");
+  }
+  const externalVault0 = m.contract('ExternalVault');
+  const externalVault1 = m.contract('ExternalVault');
+  const externalVault2 = m.contract('ExternalVault');
+  const externalVaults = [externalVault0, externalVault1, externalVault2];
+  
+  const Vault = m.contract('Vault', [deployer, tokenAddress, externalVaults]);
 
   const riddles = [
     // [
@@ -54,4 +63,4 @@ const Vault = buildModule('Vault', (m) => {
 
   return {};
 });
-export default RiddleQuestFactory;
+export default VaultModule;

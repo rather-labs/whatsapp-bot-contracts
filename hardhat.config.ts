@@ -1,23 +1,23 @@
 import type { HardhatUserConfig } from 'hardhat/config';
 import '@nomicfoundation/hardhat-toolbox-viem';
 import 'hardhat-contract-sizer';
+import { baseSepolia, base } from 'viem/chains';
 
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-const SEPOLIA_RPC_URL = process.env.SEPOLIA_RPC_URL;
-const ETHERSCAN_API_KEY = process.env.ETHERSCAN_API_KEY;
-const SEPOLIA_PRIVATE_KEY = process.env.SEPOLIA_PRIVATE_KEY;
+const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL;
+const BASE_SEPOLIA_PRIVATE_KEY = process.env.BASE_SEPOLIA_PRIVATE_KEY;
 
-if (!SEPOLIA_RPC_URL) {
-  throw new Error('⛔ Missing environment variable: SEPOLIA_RPC_URL');
+
+if (!BASE_SEPOLIA_RPC_URL) {
+  throw new Error('⛔ Missing environment variable: BASE_SEPOLIA_RPC_URL');
 }
-if (!ETHERSCAN_API_KEY) {
-  throw new Error('⛔ Missing environment variable: ETHERSCAN_API_KEY');
+
+if (!BASE_SEPOLIA_PRIVATE_KEY) {
+  throw new Error('⛔ Missing environment variable: BASE_SEPOLIA_PRIVATE_KEY');
 }
-if (!SEPOLIA_PRIVATE_KEY) {
-  throw new Error('⛔ Missing environment variable: SEPOLIA_PRIVATE_KEY');
-}
+
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -27,7 +27,6 @@ const config: HardhatUserConfig = {
         enabled: true,
         runs: 500,
       },
-      evmVersion: 'cancun',
       viaIR: false,
     },
   },
@@ -39,20 +38,21 @@ const config: HardhatUserConfig = {
   sourcify: {
     enabled: true,
   },
-  etherscan: {
-    apiKey: {
-      sepolia: ETHERSCAN_API_KEY,
-    },
-  },
   networks: {
     localhost: {
-      allowUnlimitedContractSize: true,
+      allowUnlimitedContractSize: false,
       chainId: 31_337,
     },
-    sepolia: {
-      url: SEPOLIA_RPC_URL,
-      chainId: 11_155_111,
-      accounts: [SEPOLIA_PRIVATE_KEY],
+    baseSepolia: {
+      url: baseSepolia.rpcUrls.default.http[0],
+      chainId: baseSepolia.id,
+      accounts: [BASE_SEPOLIA_PRIVATE_KEY],
+      allowUnlimitedContractSize: false,
+    },
+    base: {
+      url: base.rpcUrls.default.http[0],
+      chainId: base.id,
+      accounts: [BASE_SEPOLIA_PRIVATE_KEY],
       allowUnlimitedContractSize: false,
     },
   },
