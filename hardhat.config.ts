@@ -6,18 +6,13 @@ import { baseSepolia, base } from 'viem/chains';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
-const BASE_SEPOLIA_RPC_URL = process.env.BASE_SEPOLIA_RPC_URL;
-const BASE_SEPOLIA_PRIVATE_KEY = process.env.BASE_SEPOLIA_PRIVATE_KEY;
+const BASE_PRIVATE_KEY = process.env.BASE_PRIVATE_KEY;
+const BASE_MAINNET_RPC_URL=process.env.BASE_MAINNET_RPC_URL;
+const BASE_SEPOLIA_RPC_URL=process.env.BASE_SEPOLIA_RPC_URL;
 
-
-if (!BASE_SEPOLIA_RPC_URL) {
-  throw new Error('⛔ Missing environment variable: BASE_SEPOLIA_RPC_URL');
+if (!BASE_PRIVATE_KEY) {
+  throw new Error('⛔ Missing environment variable: BASE_PRIVATE_KEY');
 }
-
-if (!BASE_SEPOLIA_PRIVATE_KEY) {
-  throw new Error('⛔ Missing environment variable: BASE_SEPOLIA_PRIVATE_KEY');
-}
-
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -44,15 +39,15 @@ const config: HardhatUserConfig = {
       chainId: 31_337,
     },
     baseSepolia: {
-      url: baseSepolia.rpcUrls.default.http[0],
+      url: BASE_SEPOLIA_RPC_URL?? baseSepolia.rpcUrls.default.http[0],
       chainId: baseSepolia.id,
-      accounts: [BASE_SEPOLIA_PRIVATE_KEY],
+      accounts: [BASE_PRIVATE_KEY],
       allowUnlimitedContractSize: false,
     },
     base: {
-      url: base.rpcUrls.default.http[0],
+      url: BASE_MAINNET_RPC_URL?? base.rpcUrls.default.http[0],
       chainId: base.id,
-      accounts: [BASE_SEPOLIA_PRIVATE_KEY],
+      accounts: [BASE_PRIVATE_KEY],
       allowUnlimitedContractSize: false,
     },
   },
