@@ -1,9 +1,10 @@
 {
   "scripts": {
     "start": "npx hardhat node",
-    "deploy:local": "npx hardhat ignition deploy ./ignition/modules/Vault.ts --network localhost --verify",
-    "deploy:sepolia": "npx hardhat ignition deploy ./ignition/modules/Vault.ts --network baseSepolia --verify",
-    "deploy:mainnet": "npx hardhat ignition deploy ./ignition/modules/Vault.ts --network sepolia --verify",
+    "compile": "npx hardhat compile",
+    "deploy:local": "npx hardhat ignition deploy ./ignition/modules/Vault.ts --network localhost --reset",
+    "deploy:sepolia": "npx hardhat ignition deploy ./ignition/modules/Vault.ts --network baseSepolia",
+    "deploy:mainnet": "npx hardhat ignition deploy ./ignition/modules/Vault.ts --network sepolia",
     "account:create": "npx ts-node scripts/createAccount.ts",
     "account:get:sepolia": "npx ts-node scripts/getAccount.ts",
     "account:get:mainnet": "npx ts-node scripts/getAccount.ts base-mainnet"

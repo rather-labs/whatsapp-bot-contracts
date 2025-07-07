@@ -1,17 +1,16 @@
 // SPDX-License-Identifier: MIT
 pragma solidity >=0.8.28;
 
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {ERC4626} from "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 
-import {EIP712} from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import {ECDSA} from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
-import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
-import {ReentrancyGuard} from "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
-import {Nonces} from "@openzeppelin/contracts/utils/Nonces.sol";
-
+import "@openzeppelin/contracts/access/AccessControl.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import "@openzeppelin/contracts/utils/Pausable.sol";
+import "@openzeppelin/contracts/utils/Nonces.sol";
 
 contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces, Pausable {
 
@@ -26,7 +25,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     // 0: Low
     // 1: Medium
     // 2: High
-    uint8 public NumberOfRiskProfiles = 3;
+    uint8 public constant NumberOfRiskProfiles = 3;
     // External vaults must be ERC4626 compliant .
     IERC4626[NumberOfRiskProfiles] public externalVaults; 
 
@@ -35,7 +34,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     // 1: Only Transfers outside the vault and changing risk and 
     //   auth profile changing requires verification
     // 2: No action requires verification
-    uint8 public immutable NumberOfAuthProfiles = 3;
+    uint8 public constant NumberOfAuthProfiles = 3;
 
     // Actions:
     // 0: RegisterUser (User, Wallet)
@@ -85,11 +84,11 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         token = _token;
         externalVaults = _externalVaults;
         for (uint8 i = 0; i < NumberOfRiskProfiles; i++) { // Allow all vaults to manage assets from this vault
-            _token.safeApprove(address(_externalVaults[i]), type(uint256).max);
+            _token.forceApprove(address(_externalVaults[i]), type(uint256).max);
         }
     }
 
-    function RegisterUser(uint256 _user, address _wallet) 
+    function RegisterUser(uint256 _user, address _wallet, bytes calldata signature) 
         external 
         onlyRole(RELAYER_ROLE) 
         nonReentrant 
@@ -201,19 +200,19 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
 
         if (profileFrom == profileTo) {
             uint256 shares = externalVaults[profileFrom].convertToShares(assets);
-            userShares[userFrom][profileFrom] -= shares;
-            userShares[userTo][profileTo] += shares;
+            userShares[userFrom] -= shares;
+            userShares[userTo] += shares;
         } else {
             uint256 sharesFrom = externalVaults[profileFrom].withdraw(assets, address(this), userAddresses[userTo]);
             uint256 sharesTo = externalVaults[profileTo].deposit(assets, userAddresses[userTo]);
-            userShares[userFrom][profileFrom] -= sharesFrom;
-            userShares[userTo][profileTo] += sharesTo;
+            userShares[userFrom] -= sharesFrom;
+            userShares[userTo] += sharesTo;
         }
 
         emit TransferWithinVault(userFrom, userTo, assets);
     }
 
-    function ChangeRiskProfile(uint256 _user, uint8 _riskProfile) 
+    function ChangeRiskProfile(uint256 _user, uint8 _riskProfile, uint256 nonce, bytes calldata signature) 
         external 
         onlyRole(RELAYER_ROLE) 
         nonReentrant  
@@ -222,7 +221,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         require (_riskProfile < NumberOfRiskProfiles, "Invalid risk profile");
 
         if (userAuthProfile[_user] < 2) {
-            if (!authVerifier.verify(signedData, userWallets[_user], _riskProfile)) {
+            if (!_verifyRiskProfile(_user, _riskProfile, nonce, signature)) {
                 revert("User not authenticated");
             }
         }
@@ -235,7 +234,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         userRiskProfile[_user] = _riskProfile;
     }
 
-    function ChangeAuthProfile(uint256 _user, uint8 _authProfile) 
+    function ChangeAuthProfile(uint256 _user, uint8 _authProfile, uint256 nonce, bytes calldata signature) 
         external 
         onlyRole(RELAYER_ROLE) 
         nonReentrant  
@@ -243,8 +242,8 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         require(userAddresses[_user] != address(0), "User not registered");
         require (_authProfile < NumberOfAuthProfiles, "Invalid auth profile");
 
-        if (userAuthProfile[_user] ‹ 2) {
-            if (!authVerifier.verify(signedData, userWallets[_user], _authProfile)) {
+        if (userAuthProfile[_user] < 2) {
+            if (!_verifyAuthProfile(_user, _authProfile, nonce, signature)) {
                 revert("User not authenticated");
             }
         }
@@ -269,8 +268,8 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         return ECDSA.recover(digest, signature) == userAddresses[user];
     }
 
-    function _verifyWithdraw(uint256 user, uint256 shares, uint8 riskProfile, uint256 nonce, bytes calldata signature) internal view returns (bool) {
-        bytes32 structHash = keccak256(abi.encode(WITHDRAW_TYPEHASH, user, shares, riskProfile, nonce));
+    function _verifyWithdraw(uint256 user, address addressTo, uint256 assets, uint256 nonce, bytes calldata signature) internal view returns (bool) {
+        bytes32 structHash = keccak256(abi.encode(WITHDRAW_TYPEHASH, user, addressTo, assets, nonce));
         bytes32 digest = _hashTypedDataV4(structHash);
         return ECDSA.recover(digest, signature) == userAddresses[user];
     }

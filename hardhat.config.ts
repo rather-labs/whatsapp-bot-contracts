@@ -34,6 +34,20 @@ const config: HardhatUserConfig = {
     enabled: true,
   },
   networks: {
+    hardhat: {
+      allowUnlimitedContractSize: false,
+      accounts: [
+        {
+          privateKey: BASE_PRIVATE_KEY,
+          balance: '100000000000000000000',
+        },
+      ],
+      chainId: 31_337,
+      mining: {
+        auto: true,
+        interval: 1000,
+      },
+    },
     localhost: {
       allowUnlimitedContractSize: false,
       chainId: 31_337,
