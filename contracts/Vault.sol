@@ -3,6 +3,7 @@ pragma solidity >=0.8.28;
 
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -37,7 +38,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     uint8 public constant NumberOfAuthProfiles = 3;
 
     // Actions:
-    // 0: RegisterUser (User, Wallet)
+    // 0: RegisterUser (User, Wallet, Permit) - Uses permit for verification
     // 1: Deposit (User, Amount, Nonce)
     // 2: Withdraw (User, Amount, Nonce)
     // 3: Transfer (UserFrom, UserTo, Amount, Nonce)
@@ -46,7 +47,6 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     // 6: SetAuthProfile (User, AuthProfile, Nonce)
 
     // Hashes for EIP712 verification when needed
-    bytes32 public constant REGISTER_USER_TYPEHASH = keccak256("RegisterUser(uint256 user,address wallet)");
     bytes32 public constant DEPOSIT_TYPEHASH = keccak256("Deposit(uint256 user,uint256 assets,uint256 nonce)");
     bytes32 public constant WITHDRAW_TYPEHASH = keccak256("Withdraw(uint256 user,uint256 shares,uint8 riskProfile,uint256 nonce)");
     bytes32 public constant TRANSFER_TYPEHASH = keccak256("Transfer(uint256 userFrom,address userTo,uint256 assets,uint256 nonce)");
@@ -88,12 +88,19 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         }
     }
 
-    function RegisterUser(uint256 _user, address _wallet, bytes calldata signature) 
+    function RegisterUser(
+        uint256 _user, 
+        address _wallet, 
+        uint256 _permitValue,
+        uint256 _permitDeadline,
+        uint256 _permitNonce,
+        bytes calldata _permitSignature
+    ) 
         external 
         onlyRole(RELAYER_ROLE) 
         nonReentrant 
     {   
-        require(_verifyRegisterUser(_user, _wallet, signature), "Invalid signature");
+        require(_verifyPermit(_wallet, _permitValue, _permitDeadline, _permitNonce, _permitSignature), "Invalid permit");
 
         if (userAddresses[_user] != address(0)) {
             revert("User already registered");
@@ -298,10 +305,53 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         return ECDSA.recover(digest, signature) == userAddresses[user];
     }
 
-    function _verifyRegisterUser(uint256 user, address wallet, bytes calldata signature) internal view returns (bool) {
-        bytes32 structHash = keccak256(abi.encode(REGISTER_USER_TYPEHASH, user, wallet));
-        bytes32 digest = _hashTypedDataV4(structHash);
-        return ECDSA.recover(digest, signature) == wallet;
+    function _verifyPermit(
+        address wallet,
+        uint256 permitValue,
+        uint256 permitDeadline,
+        uint256 permitNonce,
+        bytes calldata permitSignature
+    ) internal view returns (bool) {
+        // Verify the permit is for this vault contract
+        require(permitValue == uint256(uint160(address(this))), "Invalid permit value");
+        require(permitDeadline >= block.timestamp, "Permit expired");
+        
+        // Cast token to IERC20Permit to access DOMAIN_SEPARATOR
+        IERC20Permit permitToken = IERC20Permit(address(token));
+        
+        // Verify the permit signature using EIP-712
+        bytes32 permitHash = keccak256(abi.encodePacked(
+            "\x19\x01",
+            permitToken.DOMAIN_SEPARATOR(),
+            keccak256(abi.encode(
+                keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"),
+                wallet,
+                address(this),
+                permitValue,
+                permitNonce,
+                permitDeadline
+            ))
+        ));
+        
+        // Split the signature into v, r, s components
+        require(permitSignature.length == 65, "Invalid signature length");
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            // Copy calldata to memory for processing
+            calldatacopy(0, permitSignature.offset, 65)
+            r := mload(0)
+            s := mload(32)
+            v := byte(0, mload(64))
+        }
+        
+        // Handle signature malleability
+        if (v < 27) v += 27;
+        if (v != 27 && v != 28) return false;
+        
+        address signer = ecrecover(permitHash, v, r, s);
+        return signer == wallet;
     }
 
     // --- Admin ---
