@@ -30,6 +30,14 @@ contract USDCoin is ERC20, ERC20Permit, ERC20Votes, Ownable, Pausable {
     }
 
     /**
+     * Circle’s implementation overrides the EIP-712 version to "2".
+     * We do the same ↓ so domainSeparator matches real USDC behaviour.
+     */
+    function version() public pure virtual returns (string memory) {
+        return "2";
+    }
+
+    /**
      * @dev Override decimals to return 6 (like real USDC)
      */
     function decimals() public view virtual override returns (uint8) {
