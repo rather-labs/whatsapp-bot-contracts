@@ -21,6 +21,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     bytes32 public constant RELAYER_ROLE = keccak256("RELAYER_ROLE");
 
     IERC20 public immutable token;
+    IERC20Permit public immutable tokenPermit;
 
     // Risk profile:
     // 0: Low
@@ -73,7 +74,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
 
     constructor(
         address initialOwner,
-        IERC20 _token,
+        address _token,
         IERC4626[NumberOfRiskProfiles] memory _externalVaults
     )  
         payable
@@ -81,26 +82,27 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     {
         _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
         _grantRole(RELAYER_ROLE, initialOwner);
-        token = _token;
+        token = IERC20(_token);
+        tokenPermit = IERC20Permit(_token);
         externalVaults = _externalVaults;
         for (uint8 i = 0; i < NumberOfRiskProfiles; i++) { // Allow all vaults to manage assets from this vault
-            _token.forceApprove(address(_externalVaults[i]), type(uint256).max);
+            token.forceApprove(address(_externalVaults[i]), type(uint256).max);
         }
     }
 
     function RegisterUser(
         uint256 _user, 
         address _wallet, 
-        uint256 _permitValue,
-        uint256 _permitDeadline,
-        uint256 _permitNonce,
-        bytes calldata _permitSignature
+        uint8 _v,
+        bytes32 _r,
+        bytes32 _s
     ) 
         external 
         onlyRole(RELAYER_ROLE) 
         nonReentrant 
     {   
-        require(_verifyPermit(_wallet, _permitValue, _permitDeadline, _permitNonce, _permitSignature), "Invalid permit");
+        
+        tokenPermit.permit(_wallet, address(this), type(uint256).max, type(uint256).max, _v, _r, _s);
 
         if (userAddresses[_user] != address(0)) {
             revert("User already registered");
@@ -303,55 +305,6 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         bytes32 structHash = keccak256(abi.encode(AUTH_PROFILE_TYPEHASH, user, authProfile, nonce));
         bytes32 digest = _hashTypedDataV4(structHash);
         return ECDSA.recover(digest, signature) == userAddresses[user];
-    }
-
-    function _verifyPermit(
-        address wallet,
-        uint256 permitValue,
-        uint256 permitDeadline,
-        uint256 permitNonce,
-        bytes calldata permitSignature
-    ) internal view returns (bool) {
-        // Verify the permit is for this vault contract
-        require(permitValue == uint256(uint160(address(this))), "Invalid permit value");
-        require(permitDeadline >= block.timestamp, "Permit expired");
-        
-        // Cast token to IERC20Permit to access DOMAIN_SEPARATOR
-        IERC20Permit permitToken = IERC20Permit(address(token));
-        
-        // Verify the permit signature using EIP-712
-        bytes32 permitHash = keccak256(abi.encodePacked(
-            "\x19\x01",
-            permitToken.DOMAIN_SEPARATOR(),
-            keccak256(abi.encode(
-                keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"),
-                wallet,
-                address(this),
-                permitValue,
-                permitNonce,
-                permitDeadline
-            ))
-        ));
-        
-        // Split the signature into v, r, s components
-        require(permitSignature.length == 65, "Invalid signature length");
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            // Copy calldata to memory for processing
-            calldatacopy(0, permitSignature.offset, 65)
-            r := mload(0)
-            s := mload(32)
-            v := byte(0, mload(64))
-        }
-        
-        // Handle signature malleability
-        if (v < 27) v += 27;
-        if (v != 27 && v != 28) return false;
-        
-        address signer = ecrecover(permitHash, v, r, s);
-        return signer == wallet;
     }
 
     // --- Admin ---
