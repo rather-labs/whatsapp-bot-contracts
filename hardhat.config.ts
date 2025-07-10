@@ -47,6 +47,10 @@ const config: HardhatUserConfig = {
         auto: true,
         interval: 1000,
       },
+      //forking: {
+      //  url: BASE_MAINNET_RPC_URL?? base.rpcUrls.default.http[0],
+      //  blockNumber: 32605200
+      //},
     },
     localhost: {
       allowUnlimitedContractSize: false,

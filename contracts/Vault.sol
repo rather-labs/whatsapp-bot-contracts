@@ -70,7 +70,8 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     event Withdraw(uint256 user, address addressTo, uint256 assets);
     event Transfer(uint256 userFrom, address userTo, uint256 assets);
     event TransferWithinVault(uint256 userFrom, uint256 userTo, uint256 assets);
-
+    event RelayerAdded(address account);
+    event OwnerChanged(address newOwner);
 
     constructor(
         address initialOwner,
@@ -108,6 +109,8 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
             revert("User already registered");
         }
         userAddresses[_user] = _wallet;
+
+        emit UserRegistered(_user, _wallet);
     }    
 
 
@@ -241,6 +244,8 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
             userShares[_user] = shares;
         }
         userRiskProfile[_user] = _riskProfile;
+
+        emit RiskProfileSet(_user, _riskProfile);
     }
 
     function ChangeAuthProfile(uint256 _user, uint8 _authProfile, uint256 nonce, bytes calldata signature) 
@@ -257,6 +262,8 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
             }
         }
         userAuthProfile[_user] = _authProfile;
+
+        emit AuthProfileSet(_user, _authProfile);
     }
 
     // --- Off-chain helpers ---
@@ -314,6 +321,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         nonReentrant 
     {
         grantRole(RELAYER_ROLE, account);
+        emit RelayerAdded(account);
     }
 
     function changeOwner(address newOwner) 
@@ -322,6 +330,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         nonReentrant  
     {
         grantRole(DEFAULT_ADMIN_ROLE, newOwner);
+        emit OwnerChanged(newOwner);
     }
 
     function pause() external onlyRole(DEFAULT_ADMIN_ROLE) {_pause();}
