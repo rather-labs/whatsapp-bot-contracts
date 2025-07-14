@@ -6,16 +6,15 @@ import "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
-import "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/Nonces.sol";
 
-contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces, Pausable {
-
-    bytes4 private constant MAGIC = 0x1626ba7e;   // ERC-1271 success value
+// This vault works for EOA signed packages. (ECDSA-secp256k1)
+contract TokenVaultWithRelayerAndEOA is EIP712, AccessControl, ReentrancyGuard, Nonces, Pausable {
 
     using SafeERC20 for IERC20;
 
@@ -283,37 +282,37 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     function _verifyDeposit(uint256 user, uint256 assets, uint256 nonce, bytes calldata signature) internal view returns (bool) {
         bytes32 structHash = keccak256(abi.encode(DEPOSIT_TYPEHASH, user, assets, nonce));
         bytes32 digest = _hashTypedDataV4(structHash);
-        return IERC1271(userAddresses[user]).isValidSignature(digest, signature) == MAGIC;
+        return ECDSA.recover(digest, signature) == userAddresses[user];
     }
 
     function _verifyWithdraw(uint256 user, address addressTo, uint256 assets, uint256 nonce, bytes calldata signature) internal view returns (bool) {
         bytes32 structHash = keccak256(abi.encode(WITHDRAW_TYPEHASH, user, addressTo, assets, nonce));
         bytes32 digest = _hashTypedDataV4(structHash);
-        return IERC1271(userAddresses[user]).isValidSignature(digest, signature) == MAGIC;
+        return ECDSA.recover(digest, signature) == userAddresses[user];
     }
 
     function _verifyTransfer(uint256 userFrom, address userTo, uint256 assets, uint256 nonce, bytes calldata signature) internal view returns (bool) {
         bytes32 structHash = keccak256(abi.encode(TRANSFER_TYPEHASH, userFrom, userTo, assets, nonce));
         bytes32 digest = _hashTypedDataV4(structHash);
-        return IERC1271(userAddresses[userFrom]).isValidSignature(digest, signature) == MAGIC;
+        return ECDSA.recover(digest, signature) == userAddresses[userFrom];
     }
 
     function _verifyTransferWithinVault(uint256 userFrom, uint256 userTo, uint256 assets, uint256 nonce, bytes calldata signature) internal view returns (bool) {
         bytes32 structHash = keccak256(abi.encode(TRANSFER_WITHIN_VAULT_TYPEHASH, userFrom, userTo, assets, nonce));
         bytes32 digest = _hashTypedDataV4(structHash);
-        return IERC1271(userAddresses[userFrom]).isValidSignature(digest, signature) == MAGIC;
+        return ECDSA.recover(digest, signature) == userAddresses[userFrom];
     }
 
     function _verifyRiskProfile(uint256 user, uint8 riskProfile, uint256 nonce, bytes calldata signature) internal view returns (bool) {
         bytes32 structHash = keccak256(abi.encode(RISK_PROFILE_TYPEHASH, user, riskProfile, nonce));
         bytes32 digest = _hashTypedDataV4(structHash);
-        return IERC1271(userAddresses[user]).isValidSignature(digest, signature) == MAGIC;
+        return ECDSA.recover(digest, signature) == userAddresses[user];
     }
 
     function _verifyAuthProfile(uint256 user, uint8 authProfile, uint256 nonce, bytes calldata signature) internal view returns (bool) {
         bytes32 structHash = keccak256(abi.encode(AUTH_PROFILE_TYPEHASH, user, authProfile, nonce));
         bytes32 digest = _hashTypedDataV4(structHash);
-        return IERC1271(userAddresses[user]).isValidSignature(digest, signature) == MAGIC;
+        return ECDSA.recover(digest, signature) == userAddresses[user];
     }
 
     // --- Admin ---
