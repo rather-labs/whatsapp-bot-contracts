@@ -95,18 +95,13 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
 
     function RegisterUser(
         uint256 _user, 
-        address _wallet, 
-        uint8 _v,
-        bytes32 _r,
-        bytes32 _s
+        address _wallet
     ) 
         external 
         onlyRole(RELAYER_ROLE) 
         nonReentrant 
     {   
         
-        tokenPermit.permit(_wallet, address(this), type(uint256).max, type(uint256).max, _v, _r, _s);
-
         if (userAddresses[_user] != address(0)) {
             revert("User already registered");
         }
@@ -272,6 +267,25 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     function getNonce(uint256 user) external view returns (uint256) {
         require(userAddresses[user] != address(0), "User not registered");
         return nonces(userAddresses[user]);
+    }
+
+    function getUserWallet(uint256 user) external view returns (address) {
+        return userAddresses[user];
+    }
+
+    function getUserShares(uint256 user) external view returns (uint256) {
+        require(userAddresses[user] != address(0), "User not registered");
+        return userShares[user];
+    }
+
+    function getUserRiskProfile(uint256 user) external view returns (uint8) {
+        require(userAddresses[user] != address(0), "User not registered");
+        return userRiskProfile[user];
+    }
+
+    function getUserAuthProfile(uint256 user) external view returns (uint8) {
+        require(userAddresses[user] != address(0), "User not registered");
+        return userAuthProfile[user];
     }
 
     function getUserAssets(uint256 user) external view returns (uint256) {
