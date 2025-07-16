@@ -5,12 +5,19 @@ import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/ERC4626.sol";
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 
+import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
+import "@openzeppelin/contracts/interfaces/IERC1271.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/cryptography/SignatureChecker.sol";
+
 import "@openzeppelin/contracts/access/AccessControl.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/Nonces.sol";
 
-contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausable {
+contract TokenVaultWithRelayerEIP712 is EIP712, AccessControl, ReentrancyGuard, Nonces, Pausable {
+
+    bytes4 internal constant MAGIC = 0x1626ba7e;   // ERC-1271 success value
 
     using SafeERC20 for IERC20;
 
@@ -43,6 +50,15 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
     // 5: ChangeRiskProfile (User, RiskProfile, Nonce)
     // 6: ChangeAuthProfile (User, AuthProfile, Nonce)
 
+    // Hashes for EIP712 verification when needed
+    bytes32 public constant DEPOSIT_TYPEHASH = keccak256("Deposit(uint256 user,uint256 assets,uint256 nonce)");
+    bytes32 public constant WITHDRAW_TYPEHASH = keccak256("Withdraw(uint256 user,uint256 assets,uint256 nonce)");
+    bytes32 public constant TRANSFER_TYPEHASH = keccak256("Transfer(uint256 userFrom,address userTo,uint256 assets,uint256 nonce)");
+    bytes32 public constant TRANSFER_WITHIN_VAULT_TYPEHASH = keccak256("TransferWithinVault(uint256 userFrom,uint256 userTo,uint256 assets,uint256 nonce)");
+    bytes32 public constant RISK_PROFILE_TYPEHASH = keccak256("ChangeRiskProfile(uint256 user,uint8 riskProfile,uint256 nonce)");
+    bytes32 public constant AUTH_PROFILE_TYPEHASH = keccak256("ChangeAuthProfile(uint256 user,uint8 authProfile,uint256 nonce)");
+
+
     // User data:
     mapping(uint256 => address) public userAddresses;
     mapping(uint256 => uint256) public userShares;
@@ -66,6 +82,7 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
         IERC4626[NumberOfRiskProfiles] memory _externalVaults
     )  
         payable
+        EIP712("TokenVaultWithRelayer", "1") // set domain separator
     {
         _grantRole(DEFAULT_ADMIN_ROLE, initialOwner);
         _grantRole(RELAYER_ROLE, initialOwner);
@@ -98,21 +115,17 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
     function deposit(
         uint256 user,
         uint256 assets,
-        uint256 nonce
+        uint256 nonce,
+        bytes calldata signature
     ) external 
       whenNotPaused
       nonReentrant 
     {
         require(userAddresses[user] != address(0), "User not registered");
         require(nonce == nonces(userAddresses[user]), "Invalid nonce");
-    
         if (userAuthProfile[user] < 1) {
-            require(userAddresses[user] == msg.sender, "The user must authorize this action");
-        } else { 
-            require(hasRole(RELAYER_ROLE, msg.sender) || userAddresses[user] == msg.sender, 
-            "Only authorized relayers or the user can authorize this action"
-            );
-        }
+            require(_verifyDeposit(user, assets, nonce, signature), "Invalid signature");
+        } 
 
         _useNonce(userAddresses[user]);
 
@@ -126,99 +139,91 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
 
     // Withdraw from vault to user wallet
     function withdraw(
-        uint256 _user,
-        uint256 _assets,
-        uint256 _nonce
+        uint256 user,
+        uint256 assets,
+        uint256 nonce,
+        bytes calldata signature
     ) external 
       whenNotPaused
       nonReentrant 
     {
-        require(userAddresses[_user] != address(0), "User not registered");
-        require(_nonce == nonces(userAddresses[_user]), "Invalid nonce");
-        if (userAuthProfile[_user] < 1) {
-            require(userAddresses[_user] == msg.sender, "The user must authorize this action");
-        } else {
-            require(hasRole(RELAYER_ROLE, msg.sender) || userAddresses[_user] == msg.sender, 
-            "Only authorized relayers or the user can authorize this action"
-            );
+        require(userAddresses[user] != address(0), "User not registered");
+        require(nonce == nonces(userAddresses[user]), "Invalid nonce");
+        if (userAuthProfile[user] < 1) {
+            require(_verifyWithdraw(user, assets, nonce, signature), "Invalid signature");
         }
         
-        _useNonce(userAddresses[_user]);
+        _useNonce(userAddresses[user]);
 
-        require(userShares[_user] >= externalVaults[userRiskProfile[_user]].convertToShares(_assets), "Not enough shares");
+        require(userShares[user] >= externalVaults[userRiskProfile[user]].convertToShares(assets), "Not enough shares");
 
-        uint256 shares = externalVaults[userRiskProfile[_user]].withdraw(_assets, userAddresses[_user], address(this));
-        userShares[_user] -= shares;
+        uint256 shares = externalVaults[userRiskProfile[user]].withdraw(assets, userAddresses[user], address(this));
+        userShares[user] -= shares;
 
-        emit Withdraw(_user, _assets);
+        emit Withdraw(user, assets);
     }
 
     function transfer(
-        uint256 _userFrom,
-        address _userTo,
-        uint256 _assets,
-        uint256 _nonce
+        uint256 userFrom,
+        address userTo,
+        uint256 assets,
+        uint256 nonce,
+        bytes calldata signature
     ) external 
         whenNotPaused
         nonReentrant 
     {
-        require(userAddresses[_userFrom] != address(0), "User not registered");
-        require(_nonce == nonces(userAddresses[_userFrom]), "Invalid nonce");
-        if (userAuthProfile[_userFrom] < 2) {
-            require(userAddresses[_userFrom] == msg.sender, "The user must authorize this action");
-        } else {
-            require(hasRole(RELAYER_ROLE, msg.sender) || userAddresses[_userFrom] == msg.sender, 
-            "Only authorized relayers or the user can authorize this action"
-            );
+        require(userAddresses[userFrom] != address(0), "User not registered");
+        require(nonce == nonces(userAddresses[userFrom]), "Invalid nonce");
+        if (userAuthProfile[userFrom] < 2) {
+            require(_verifyTransfer(userFrom, userTo, assets, nonce, signature), "Invalid signature");
         }
-        _useNonce(userAddresses[_userFrom]);
+        _useNonce(userAddresses[userFrom]);
 
-        uint256 shares = externalVaults[userRiskProfile[_userFrom]].withdraw(_assets, _userTo, address(this));
-        userShares[_userFrom] -= shares;
+        uint256 shares = externalVaults[userRiskProfile[userFrom]].withdraw(assets, userTo, address(this));
+        userShares[userFrom] -= shares;
 
-        emit Transfer(_userFrom, _userTo, _assets);
+        emit Transfer(userFrom, userTo, assets);
     }
 
     function transferWithinVault(
-        uint256 _userFrom,
-        uint256 _userTo,
-        uint256 _assets,
-        uint256 _nonce
+        uint256 userFrom,
+        uint256 userTo,
+        uint256 assets,
+        uint256 nonce,
+        bytes calldata signature
     ) external 
       whenNotPaused 
       nonReentrant  
     {
-        require(userAddresses[_userFrom] != address(0), "User not registered");
-        require(userAddresses[_userTo] != address(0), "Receiver not registered");
-        require(_nonce == nonces(userAddresses[_userFrom]), "Invalid nonce");
-        if (userAuthProfile[_userFrom] < 2) {
-            require(userAddresses[_userFrom] == msg.sender, "The user must authorize this action");
-        } else {
-            require(hasRole(RELAYER_ROLE, msg.sender) || userAddresses[_userFrom] == msg.sender, 
-            "Only authorized relayers or the user can authorize this action"
-            );
+        require(userAddresses[userFrom] != address(0), "User not registered");
+        require(userAddresses[userTo] != address(0), "Receiver not registered");
+        require(nonce == nonces(userAddresses[userFrom]), "Invalid nonce");
+        if (userAuthProfile[userFrom] < 2) {
+            require(_verifyTransferWithinVault(userFrom, userTo, assets, nonce, signature), "Invalid signature");
         }
-        _useNonce(userAddresses[_userFrom]);
+        _useNonce(userAddresses[userFrom]);
 
-        uint8 profileFrom = userRiskProfile[_userFrom];
-        uint8 profileTo = userRiskProfile[_userTo];
+        uint8 profileFrom = userRiskProfile[userFrom];
+        uint8 profileTo = userRiskProfile[userTo];
 
         if (profileFrom == profileTo) {
-            uint256 shares = externalVaults[profileFrom].convertToShares(_assets);
-            userShares[_userFrom] -= shares;
-            userShares[_userTo] += shares;
+            uint256 shares = externalVaults[profileFrom].convertToShares(assets);
+            userShares[userFrom] -= shares;
+            userShares[userTo] += shares;
         } else {
-            uint256 sharesFrom = externalVaults[profileFrom].withdraw(_assets, address(this), userAddresses[_userTo]);
-            uint256 sharesTo = externalVaults[profileTo].deposit(_assets, userAddresses[_userTo]);
-            userShares[_userFrom] -= sharesFrom;
-            userShares[_userTo] += sharesTo;
+            uint256 sharesFrom = externalVaults[profileFrom].withdraw(assets, address(this), userAddresses[userTo]);
+            uint256 sharesTo = externalVaults[profileTo].deposit(assets, userAddresses[userTo]);
+            userShares[userFrom] -= sharesFrom;
+            userShares[userTo] += sharesTo;
         }
 
-        emit TransferWithinVault(_userFrom, _userTo, _assets);
+        emit TransferWithinVault(userFrom, userTo, assets);
     }
 
-    function ChangeRiskProfile(uint256 _user, uint8 _riskProfile, uint256 nonce) 
+    function ChangeRiskProfile(uint256 _user, uint8 _riskProfile, uint256 nonce, bytes calldata signature) 
         external 
+        onlyRole(RELAYER_ROLE) 
         nonReentrant  
     {
         require(userAddresses[_user] != address(0), "User not registered");
@@ -226,12 +231,9 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
         require(nonce == nonces(userAddresses[_user]), "Invalid nonce");
 
         if (userAuthProfile[_user] < 2) {
-            require(userAddresses[_user] == msg.sender, "The user must authorize this action");
-        } else {
-            require(hasRole(RELAYER_ROLE, msg.sender) || userAddresses[_user] == msg.sender, 
-            "Only authorized relayers or the user can authorize this action"
-            );
+            require(_verifyRiskProfile(_user, _riskProfile, nonce, signature), "Invalid signature");
         }
+
         _useNonce(userAddresses[_user]);
 
         if (userShares[_user] > 0) {
@@ -244,8 +246,9 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
         emit RiskProfileSet(_user, _riskProfile);
     }
 
-    function ChangeAuthProfile(uint256 _user, uint8 _authProfile, uint256 nonce) 
+    function ChangeAuthProfile(uint256 _user, uint8 _authProfile, uint256 nonce, bytes calldata signature) 
         external 
+        onlyRole(RELAYER_ROLE) 
         nonReentrant  
     {
         require(userAddresses[_user] != address(0), "User not registered");
@@ -253,11 +256,7 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
         require(nonce == nonces(userAddresses[_user]), "Invalid nonce");
 
         if (userAuthProfile[_user] < 2) {
-            require(userAddresses[_user] == msg.sender, "The user must authorize this action");
-        } else {
-            require(hasRole(RELAYER_ROLE, msg.sender) || userAddresses[_user] == msg.sender, 
-            "Only authorized relayers or the user can authorize this action"
-            );
+            require(_verifyAuthProfile(_user, _authProfile, nonce, signature), "Invalid signature");
         }
 
         _useNonce(userAddresses[_user]);
@@ -297,6 +296,37 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
         return externalVaults[userRiskProfile[user]].convertToAssets(userShares[user]);
     }
 
+    // --- EIP712 Verification ---
+    function _verifyDeposit(uint256 user, uint256 assets, uint256 nonce, bytes calldata signature) internal view returns (bool) {
+        bytes32 structHash = keccak256(abi.encode(DEPOSIT_TYPEHASH, user, assets, nonce));
+        return SignatureChecker.isValidSignatureNow(userAddresses[user], _hashTypedDataV4(structHash), signature);
+    }
+
+    function _verifyWithdraw(uint256 user, uint256 assets, uint256 nonce, bytes calldata signature) internal view returns (bool) {
+        bytes32 structHash = keccak256(abi.encode(WITHDRAW_TYPEHASH, user, assets, nonce));
+        return SignatureChecker.isValidSignatureNow(userAddresses[user], _hashTypedDataV4(structHash), signature);
+    }
+
+    function _verifyTransfer(uint256 userFrom, address userTo, uint256 assets, uint256 nonce, bytes calldata signature) internal view returns (bool) {
+        bytes32 structHash = keccak256(abi.encode(TRANSFER_TYPEHASH, userFrom, userTo, assets, nonce));
+        return SignatureChecker.isValidSignatureNow(userAddresses[userFrom], _hashTypedDataV4(structHash), signature);
+    }
+
+    function _verifyTransferWithinVault(uint256 userFrom, uint256 userTo, uint256 assets, uint256 nonce, bytes calldata signature) internal view returns (bool) {
+        bytes32 structHash = keccak256(abi.encode(TRANSFER_WITHIN_VAULT_TYPEHASH, userFrom, userTo, assets, nonce));
+        return SignatureChecker.isValidSignatureNow(userAddresses[userFrom], _hashTypedDataV4(structHash), signature);
+    }
+
+    function _verifyRiskProfile(uint256 user, uint8 riskProfile, uint256 nonce, bytes calldata signature) internal view returns (bool) {
+        bytes32 structHash = keccak256(abi.encode(RISK_PROFILE_TYPEHASH, user, riskProfile, nonce));
+        return SignatureChecker.isValidSignatureNow(userAddresses[user], _hashTypedDataV4(structHash), signature);
+    }
+
+    function _verifyAuthProfile(uint256 user, uint8 authProfile, uint256 nonce, bytes calldata signature) internal view returns (bool) {
+        bytes32 structHash = keccak256(abi.encode(AUTH_PROFILE_TYPEHASH, user, authProfile, nonce));
+        return SignatureChecker.isValidSignatureNow(userAddresses[user], _hashTypedDataV4(structHash), signature);
+    }
+
     // --- Admin ---
     function addRelayer(address account) 
         external 
@@ -325,5 +355,5 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
     //      - Must retrieve all assets and resend them to the new vaults
     //      - Must generate new permits and eliminate old ones
     // TODO: Add risk management functions
-    // TODO: Add functions to pause specific users and or wallets from commiting new transactions
+    // TODO: Add functions to blacklist users
 }
