@@ -45,16 +45,16 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     // 2: Withdraw (User, Amount, Nonce)
     // 3: Transfer (UserFrom, UserTo, Amount, Nonce)
     // 4: TransferWithinVault (UserFrom, UserTo, Amount, Nonce)
-    // 5: SetRiskProfile (User, RiskProfile, Nonce)
-    // 6: SetAuthProfile (User, AuthProfile, Nonce)
+    // 5: ChangeRiskProfile (User, RiskProfile, Nonce)
+    // 6: ChangeAuthProfile (User, AuthProfile, Nonce)
 
     // Hashes for EIP712 verification when needed
     bytes32 public constant DEPOSIT_TYPEHASH = keccak256("Deposit(uint256 user,uint256 assets,uint256 nonce)");
     bytes32 public constant WITHDRAW_TYPEHASH = keccak256("Withdraw(uint256 user,uint256 assets,uint256 nonce)");
     bytes32 public constant TRANSFER_TYPEHASH = keccak256("Transfer(uint256 userFrom,address userTo,uint256 assets,uint256 nonce)");
     bytes32 public constant TRANSFER_WITHIN_VAULT_TYPEHASH = keccak256("TransferWithinVault(uint256 userFrom,uint256 userTo,uint256 assets,uint256 nonce)");
-    bytes32 public constant RISK_PROFILE_TYPEHASH = keccak256("SetRiskProfile(uint256 user,uint8 riskProfile,uint256 nonce)");
-    bytes32 public constant AUTH_PROFILE_TYPEHASH = keccak256("SetAuthProfile(uint256 user,uint8 authProfile,uint256 nonce)");
+    bytes32 public constant RISK_PROFILE_TYPEHASH = keccak256("ChangeRiskProfile(uint256 user,uint8 riskProfile,uint256 nonce)");
+    bytes32 public constant AUTH_PROFILE_TYPEHASH = keccak256("ChangeAuthProfile(uint256 user,uint8 authProfile,uint256 nonce)");
 
 
     // User data:
@@ -228,9 +228,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         require (_riskProfile < NumberOfRiskProfiles, "Invalid risk profile");
 
         if (userAuthProfile[_user] < 2) {
-            if (!_verifyRiskProfile(_user, _riskProfile, nonce, signature)) {
-                revert("User not authenticated");
-            }
+            require(_verifyRiskProfile(_user, _riskProfile, nonce, signature), "Invalid signature");
         }
 
         if (userShares[_user] > 0) {
@@ -252,9 +250,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         require (_authProfile < NumberOfAuthProfiles, "Invalid auth profile");
 
         if (userAuthProfile[_user] < 2) {
-            if (!_verifyAuthProfile(_user, _authProfile, nonce, signature)) {
-                revert("User not authenticated");
-            }
+            require(_verifyAuthProfile(_user, _authProfile, nonce, signature), "Invalid signature");
         }
         userAuthProfile[_user] = _authProfile;
 
