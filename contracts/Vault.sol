@@ -26,7 +26,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     IERC20Permit public immutable tokenPermit;
 
     // Risk profile:
-    // 0: Low
+    // 0: Low (Default)
     // 1: Medium
     // 2: High
     uint8 public constant NumberOfRiskProfiles = 3;
@@ -35,13 +35,12 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
 
     // Auth profile:
     // 0: Every action requires verification
-    // 1: Only Transfers outside the vault and changing risk and 
-    //   auth profile changing requires verification
+    // 1: Deposits and withdrawals to user wallet does not require verification (Default)
     // 2: No action requires verification
     uint8 public constant NumberOfAuthProfiles = 3;
 
     // Actions:
-    // 0: RegisterUser (User, Wallet, Permit) - Uses permit for verification
+    // 0: RegisterUser (User, Wallet) 
     // 1: Deposit (User, Amount, Nonce)
     // 2: Withdraw (User, Amount, Nonce)
     // 3: Transfer (UserFrom, UserTo, Amount, Nonce)
@@ -51,7 +50,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
 
     // Hashes for EIP712 verification when needed
     bytes32 public constant DEPOSIT_TYPEHASH = keccak256("Deposit(uint256 user,uint256 assets,uint256 nonce)");
-    bytes32 public constant WITHDRAW_TYPEHASH = keccak256("Withdraw(uint256 user,uint256 shares,uint8 riskProfile,uint256 nonce)");
+    bytes32 public constant WITHDRAW_TYPEHASH = keccak256("Withdraw(uint256 user,uint256 assets,uint256 nonce)");
     bytes32 public constant TRANSFER_TYPEHASH = keccak256("Transfer(uint256 userFrom,address userTo,uint256 assets,uint256 nonce)");
     bytes32 public constant TRANSFER_WITHIN_VAULT_TYPEHASH = keccak256("TransferWithinVault(uint256 userFrom,uint256 userTo,uint256 assets,uint256 nonce)");
     bytes32 public constant RISK_PROFILE_TYPEHASH = keccak256("SetRiskProfile(uint256 user,uint8 riskProfile,uint256 nonce)");
@@ -69,7 +68,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     event AuthProfileSet(uint256 user, uint8 profile);
     event UserRegistered(uint256 user, address wallet);
     event Deposit(uint256 user, uint256 assets);
-    event Withdraw(uint256 user, address addressTo, uint256 assets);
+    event Withdraw(uint256 user, uint256 assets);
     event Transfer(uint256 userFrom, address userTo, uint256 assets);
     event TransferWithinVault(uint256 userFrom, uint256 userTo, uint256 assets);
     event RelayerAdded(address account);
@@ -101,11 +100,10 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         onlyRole(RELAYER_ROLE) 
         nonReentrant 
     {   
+        require(userAddresses[_user] == address(0), "User already registered");
         
-        if (userAddresses[_user] != address(0)) {
-            revert("User already registered");
-        }
         userAddresses[_user] = _wallet;
+        userAuthProfile[_user] = 1;
 
         emit UserRegistered(_user, _wallet);
     }    
@@ -137,9 +135,9 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         emit Deposit(user, assets);
     }
 
+    // Withdraw from vault to user wallet
     function withdraw(
         uint256 user,
-        address addressTo,
         uint256 assets,
         uint256 nonce,
         bytes calldata signature
@@ -149,18 +147,18 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     {
         require(userAddresses[user] != address(0), "User not registered");
         require(nonce == nonces(userAddresses[user]), "Invalid nonce");
-        if (userAuthProfile[user] < 2) {
-            require(_verifyWithdraw(user, addressTo, assets, nonce, signature), "Invalid signature");
+        if (userAuthProfile[user] < 1) {
+            require(_verifyWithdraw(user, assets, nonce, signature), "Invalid signature");
         }
         
         _useNonce(userAddresses[user]);
 
         require(userShares[user] >= externalVaults[userRiskProfile[user]].convertToShares(assets), "Not enough shares");
 
-        uint256 shares = externalVaults[userRiskProfile[user]].withdraw(assets, addressTo, address(this));
+        uint256 shares = externalVaults[userRiskProfile[user]].withdraw(assets, userAddresses[user], address(this));
         userShares[user] -= shares;
 
-        emit Withdraw(user, addressTo, assets);
+        emit Withdraw(user, assets);
     }
 
     function transfer(
@@ -175,7 +173,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
     {
         require(userAddresses[userFrom] != address(0), "User not registered");
         require(nonce == nonces(userAddresses[userFrom]), "Invalid nonce");
-        if (userAuthProfile[userFrom] < 1) {
+        if (userAuthProfile[userFrom] < 2) {
             require(_verifyTransfer(userFrom, userTo, assets, nonce, signature), "Invalid signature");
         }
         _useNonce(userAddresses[userFrom]);
@@ -262,7 +260,7 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
 
         emit AuthProfileSet(_user, _authProfile);
     }
-
+    
     // --- Off-chain helpers ---
     function getNonce(uint256 user) external view returns (uint256) {
         require(userAddresses[user] != address(0), "User not registered");
@@ -300,8 +298,8 @@ contract TokenVaultWithRelayer is EIP712, AccessControl, ReentrancyGuard, Nonces
         return IERC1271(userAddresses[user]).isValidSignature(digest, signature) == MAGIC;
     }
 
-    function _verifyWithdraw(uint256 user, address addressTo, uint256 assets, uint256 nonce, bytes calldata signature) internal view returns (bool) {
-        bytes32 structHash = keccak256(abi.encode(WITHDRAW_TYPEHASH, user, addressTo, assets, nonce));
+    function _verifyWithdraw(uint256 user, uint256 assets, uint256 nonce, bytes calldata signature) internal view returns (bool) {
+        bytes32 structHash = keccak256(abi.encode(WITHDRAW_TYPEHASH, user, assets, nonce));
         bytes32 digest = _hashTypedDataV4(structHash);
         return IERC1271(userAddresses[user]).isValidSignature(digest, signature) == MAGIC;
     }
