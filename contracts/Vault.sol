@@ -153,6 +153,22 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
         emit Withdraw(_user, _assets);
     }
 
+    // Given an ammount to be paid by the user, transforms it to an ammount of shares from the vault and
+    //  assets from the wallet if the shares are not enough.
+    function getTransferValues(uint256 _user, uint256 _amount) 
+        internal view 
+        returns (uint256 _assetsFromVault, uint256 _assetsFromWallet) 
+    {
+        uint256 _totalVaultAssets = externalVaults[userRiskProfile[_user]
+            ].convertToAssets(userShares[_user]);
+        if (_amount < _totalVaultAssets) {
+            return (_amount, 0);
+        }
+        uint256 _totalWalletAssets = token.balanceOf(userAddresses[_user]);
+        require(_totalWalletAssets+_totalVaultAssets >= _amount, "Not enough assets in vault and wallet to transfer");
+        return (_totalVaultAssets, _amount - _totalVaultAssets);
+    }
+
     function transfer(
         uint256 _userFrom,
         address _userTo,
@@ -171,10 +187,16 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
             "Only authorized relayers or the user can authorize this action"
             );
         }
+        
+        (uint256 _assetsFromVault, uint256 _assetsFromWallet) = getTransferValues(_userFrom, _assets);
+
         _useNonce(userAddresses[_userFrom]);
 
-        uint256 shares = externalVaults[userRiskProfile[_userFrom]].withdraw(_assets, _userTo, address(this));
+        uint256 shares = externalVaults[userRiskProfile[_userFrom]].withdraw(_assetsFromVault, _userTo, address(this));
         userShares[_userFrom] -= shares;
+        if (_assetsFromWallet > 0) {
+            token.safeTransferFrom(userAddresses[_userFrom], _userTo, _assetsFromWallet);
+        }
 
         emit Transfer(_userFrom, _userTo, _assets);
     }
@@ -198,20 +220,33 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
             "Only authorized relayers or the user can authorize this action"
             );
         }
-        _useNonce(userAddresses[_userFrom]);
 
         uint8 profileFrom = userRiskProfile[_userFrom];
         uint8 profileTo = userRiskProfile[_userTo];
 
+        (uint256 _assetsFromVault, uint256 _assetsFromWallet) = getTransferValues(_userFrom, _assets);
+
+        _useNonce(userAddresses[_userFrom]);
+
         if (profileFrom == profileTo) {
-            uint256 shares = externalVaults[profileFrom].convertToShares(_assets);
+            uint256 shares = externalVaults[profileFrom].convertToShares(_assetsFromVault);
             userShares[_userFrom] -= shares;
             userShares[_userTo] += shares;
         } else {
-            uint256 sharesFrom = externalVaults[profileFrom].withdraw(_assets, address(this), userAddresses[_userTo]);
-            uint256 sharesTo = externalVaults[profileTo].deposit(_assets, userAddresses[_userTo]);
+            uint256 sharesFrom = externalVaults[profileFrom].withdraw(
+                _assetsFromVault, address(this), address(this)
+                );
+            uint256 sharesTo = externalVaults[profileTo].deposit(_assetsFromVault, address(this));
             userShares[_userFrom] -= sharesFrom;
             userShares[_userTo] += sharesTo;
+        }
+
+        if (_assetsFromWallet > 0) {
+            token.safeTransferFrom(userAddresses[_userFrom], address(this), _assetsFromWallet);
+            uint256 shares = externalVaults[userRiskProfile[_userTo]].deposit(
+                _assetsFromWallet, address(this)
+                );
+            userShares[_userTo] += shares;
         }
 
         emit TransferWithinVault(_userFrom, _userTo, _assets);
