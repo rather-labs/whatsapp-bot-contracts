@@ -118,6 +118,7 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
 
         // Pull tokens from user and deposit to chosen vault
         token.safeTransferFrom(userAddresses[_user], address(this), _assets);
+        token.approve(address(externalVaults[userRiskProfile[_user]]), _assets);
         uint256 shares = externalVaults[userRiskProfile[_user]].deposit(_assets, address(this));
         userShares[_user] += shares;
 
