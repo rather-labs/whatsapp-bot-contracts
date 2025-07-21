@@ -35,23 +35,26 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
     uint8 public constant NumberOfAuthProfiles = 3;
 
     // Actions:
-    // 0: RegisterUser (User, Wallet) 
-    // 1: Deposit (User, Amount, Nonce)
-    // 2: Withdraw (User, Amount, Nonce)
-    // 3: Transfer (UserFrom, UserTo, Amount, Nonce)
-    // 4: TransferWithinVault (UserFrom, UserTo, Amount, Nonce)
-    // 5: ChangeRiskProfile (User, RiskProfile, Nonce)
-    // 6: ChangeAuthProfile (User, AuthProfile, Nonce)
+    // 0: registerUser (User, Wallet) 
+    // 1: deposit (User, Amount, Nonce)
+    // 2: withdraw (User, Amount, Nonce)
+    // 3: transfer (UserFrom, UserTo, Amount, Nonce)
+    // 4: transferWithinVault (UserFrom, UserTo, Amount, Nonce)
+    // 5: changeRiskProfile (User, RiskProfile, Nonce)
+    // 6: changeAuthProfile (User, AuthProfile, Nonce)
+    // 7: changeAuthThreshold (User, AuthThreshold, Nonce)
 
     // User data:
     mapping(uint256 => address) public userAddresses;
     mapping(uint256 => uint256) public userShares;
     mapping(uint256 => uint8) public userRiskProfile;
     mapping(uint256 => uint8) public userAuthProfile;
+    mapping(uint256 => uint256) public userAuthThreshold;
 
 
     event RiskProfileSet(uint256 user, uint8 profile);
     event AuthProfileSet(uint256 user, uint8 profile);
+    event AuthThresholdSet(uint256 user, uint256 threshold);
     event UserRegistered(uint256 user, address wallet);
     event Deposit(uint256 user, uint256 assets);
     event Withdraw(uint256 user, uint256 assets);
@@ -72,12 +75,9 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
         token = IERC20(_token);
         tokenPermit = IERC20Permit(_token);
         externalVaults = _externalVaults;
-        for (uint8 i = 0; i < NumberOfRiskProfiles; i++) { // Allow all vaults to manage assets from this vault
-            token.forceApprove(address(_externalVaults[i]), type(uint256).max);
-        }
     }
 
-    function RegisterUser(
+    function registerUser(
         uint256 _user, 
         address _wallet
     ) 
@@ -96,32 +96,32 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
 
     // --- Deposit/withdraw with per-user risk profile ---
     function deposit(
-        uint256 user,
-        uint256 assets,
-        uint256 nonce
+        uint256 _user,
+        uint256 _assets,
+        uint256 _nonce
     ) external 
       whenNotPaused
       nonReentrant 
     {
-        require(userAddresses[user] != address(0), "User not registered");
-        require(nonce == nonces(userAddresses[user]), "Invalid nonce");
+        require(userAddresses[_user] != address(0), "User not registered");
+        require(_nonce == nonces(userAddresses[_user]), "Invalid nonce");
     
-        if (userAuthProfile[user] < 1) {
-            require(userAddresses[user] == msg.sender, "The user must authorize this action");
+        if (userAuthProfile[_user] < 1 && userAuthThreshold[_user] < _assets) {
+            require(userAddresses[_user] == msg.sender, "The user must authorize this action");
         } else { 
-            require(hasRole(RELAYER_ROLE, msg.sender) || userAddresses[user] == msg.sender, 
+            require(hasRole(RELAYER_ROLE, msg.sender) || userAddresses[_user] == msg.sender, 
             "Only authorized relayers or the user can authorize this action"
             );
         }
 
-        _useNonce(userAddresses[user]);
+        _useNonce(userAddresses[_user]);
 
         // Pull tokens from user and deposit to chosen vault
-        token.safeTransferFrom(userAddresses[user], address(this), assets);
-        uint256 shares = externalVaults[userRiskProfile[user]].deposit(assets, address(this));
-        userShares[user] += shares;
+        token.safeTransferFrom(userAddresses[_user], address(this), _assets);
+        uint256 shares = externalVaults[userRiskProfile[_user]].deposit(_assets, address(this));
+        userShares[_user] += shares;
 
-        emit Deposit(user, assets);
+        emit Deposit(_user, _assets);
     }
 
     // Withdraw from vault to user wallet
@@ -135,7 +135,7 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
     {
         require(userAddresses[_user] != address(0), "User not registered");
         require(_nonce == nonces(userAddresses[_user]), "Invalid nonce");
-        if (userAuthProfile[_user] < 1) {
+        if (userAuthProfile[_user] < 1 && userAuthThreshold[_user] < _assets) {
             require(userAddresses[_user] == msg.sender, "The user must authorize this action");
         } else {
             require(hasRole(RELAYER_ROLE, msg.sender) || userAddresses[_user] == msg.sender, 
@@ -180,7 +180,7 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
     {
         require(userAddresses[_userFrom] != address(0), "User not registered");
         require(_nonce == nonces(userAddresses[_userFrom]), "Invalid nonce");
-        if (userAuthProfile[_userFrom] < 2) {
+        if (userAuthProfile[_userFrom] < 2 && userAuthThreshold[_userFrom] < _assets) {
             require(userAddresses[_userFrom] == msg.sender, "The user must authorize this action");
         } else {
             require(hasRole(RELAYER_ROLE, msg.sender) || userAddresses[_userFrom] == msg.sender, 
@@ -211,9 +211,8 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
       nonReentrant  
     {
         require(userAddresses[_userFrom] != address(0), "User not registered");
-        require(userAddresses[_userTo] != address(0), "Receiver not registered");
         require(_nonce == nonces(userAddresses[_userFrom]), "Invalid nonce");
-        if (userAuthProfile[_userFrom] < 2) {
+        if (userAuthProfile[_userFrom] < 2 && userAuthThreshold[_userFrom] < _assets) {
             require(userAddresses[_userFrom] == msg.sender, "The user must authorize this action");
         } else {
             require(hasRole(RELAYER_ROLE, msg.sender) || userAddresses[_userFrom] == msg.sender, 
@@ -222,7 +221,8 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
         }
 
         uint8 profileFrom = userRiskProfile[_userFrom];
-        uint8 profileTo = userRiskProfile[_userTo];
+        // If the receiver is not registered, it will put the assets in the low risk vault
+        uint8 profileTo = userRiskProfile[_userTo]; 
 
         (uint256 _assetsFromVault, uint256 _assetsFromWallet) = getTransferValues(_userFrom, _assets);
 
@@ -252,7 +252,7 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
         emit TransferWithinVault(_userFrom, _userTo, _assets);
     }
 
-    function ChangeRiskProfile(uint256 _user, uint8 _riskProfile, uint256 nonce) 
+    function changeRiskProfile(uint256 _user, uint8 _riskProfile, uint256 nonce) 
         external 
         nonReentrant  
     {
@@ -279,7 +279,7 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
         emit RiskProfileSet(_user, _riskProfile);
     }
 
-    function ChangeAuthProfile(uint256 _user, uint8 _authProfile, uint256 nonce) 
+    function changeAuthProfile(uint256 _user, uint8 _authProfile, uint256 nonce) 
         external 
         nonReentrant  
     {
@@ -300,6 +300,22 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
         userAuthProfile[_user] = _authProfile;
 
         emit AuthProfileSet(_user, _authProfile);
+    }
+
+    function changeAuthThreshold(uint256 _user, uint256 _authThreshold, uint256 nonce) 
+        external 
+        nonReentrant  
+    {
+        require(userAddresses[_user] != address(0), "User not registered");
+        require(nonce == nonces(userAddresses[_user]), "Invalid nonce");
+
+        require(userAddresses[_user] == msg.sender, "The user must authorize this action");
+
+        _useNonce(userAddresses[_user]);
+
+        userAuthThreshold[_user] = _authThreshold;
+
+        emit AuthThresholdSet(_user, _authThreshold);
     }
     
     // --- Off-chain helpers ---
@@ -327,8 +343,12 @@ contract TokenVaultWithRelayer is AccessControl, ReentrancyGuard, Nonces, Pausab
         return userAuthProfile[user];
     }
 
-    function getUserAssets(uint256 user) external view returns (uint256) {
+    function getUserAuthThreshold(uint256 user) external view returns (uint256) {
         require(userAddresses[user] != address(0), "User not registered");
+        return userAuthThreshold[user];
+    }
+
+    function getUserAssets(uint256 user) external view returns (uint256) {
         return externalVaults[userRiskProfile[user]].convertToAssets(userShares[user]);
     }
 
